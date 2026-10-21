@@ -1,0 +1,19 @@
+# ---- 界面 ----
+pywebview>=6.0
+pythonnet>=3.0          # pywebview 的 Windows(WebView2)后端依赖
+pystray>=0.19           # 托盘图标
+pillow>=10              # 托盘图标位图
+
+# ---- 波形采集 ----
+SoundCard>=0.4.3        # WASAPI loopback,抓系统正在播放的声音
+numpy>=1.24
+
+# ---- 蓝牙(WinRT)----
+winrt-runtime>=3.0
+winrt-Windows.Devices.Bluetooth>=3.0
+winrt-Windows.Devices.Bluetooth.Advertisement>=3.0
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=3.0
+winrt-Windows.Devices.Radios>=3.0
+winrt-Windows.Storage.Streams>=3.0
+winrt-Windows.Foundation>=3.0
+winrt-Windows.Foundation.Collections>=3.0

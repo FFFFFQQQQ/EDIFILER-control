@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>W830NB 控制台(非官方)</title>
+<style>
+  :root{
+    --ink:#08090b;
+    --ink-2:#0d0f12;
+    --hair:rgba(255,255,255,.08);
+    --hair-2:rgba(255,255,255,.14);
+    --text:#f2f3f5;
+    --muted:#7c8088;
+    --dim:#4a4e56;
+    --ice:#8fd0ff;
+    --ice-soft:rgba(143,208,255,.16);
+    --warm:#e8a05a;
+    --ok:#4ad07a;
+    --err:#ff5f52;
+    --warn:#e8c15a;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:Bahnschrift,"Segoe UI Variable Display","Microsoft YaHei UI","PingFang SC",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    user-select:none;
+    cursor:default;
+  }
+
+  /* 环境:极暗的径向光 + 细颗粒 */
+  .atmos{position:fixed;inset:0;pointer-events:none;z-index:0}
+  .atmos::before{
+    content:"";position:absolute;inset:-20%;
+    background:
+      radial-gradient(60% 45% at 50% 8%, rgba(143,208,255,.055), transparent 70%),
+      radial-gradient(45% 40% at 82% 92%, rgba(232,160,90,.035), transparent 70%);
+  }
+  .grain{
+    position:absolute;inset:0;opacity:.20;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)' opacity='.5'/></svg>");
+  }
+
+  .shell{position:relative;z-index:1;height:100%;display:flex;flex-direction:column}
+
+  /* ---------- 标题栏 ---------- */
+  .bar{
+    height:42px;flex:0 0 42px;display:flex;align-items:center;
+    padding:0 8px 0 20px;cursor:grab;
+  }
+  .bar:active{cursor:grabbing}
+  .brand{
+    font-size:10px;letter-spacing:.34em;color:var(--dim);
+    text-transform:uppercase;transition:color .4s var(--ease);
+  }
+  .brand b{font-weight:600;color:var(--muted)}
+  .bar .spacer{flex:1}
+  .winbtn{
+    width:38px;height:30px;display:grid;place-items:center;border-radius:7px;
+    color:var(--dim);cursor:pointer;transition:background .18s,color .18s;
+  }
+  .winbtn svg{width:11px;height:11px}
+  .winbtn:hover{background:rgba(255,255,255,.06);color:var(--text)}
+  .winbtn.close:hover{background:rgba(255,95,82,.14);color:var(--err)}
+
+  /* ---------- 状态 ---------- */
+  .stat{
+    display:flex;align-items:center;gap:8px;padding:2px 22px 0;
+    font-size:11px;letter-spacing:.08em;color:var(--muted);
+  }
+  .dot{
+    width:6px;height:6px;border-radius:50%;background:var(--warn);
+    box-shadow:0 0 0 3px rgba(232,193,90,.10);transition:all .5s var(--ease);
+  }
+  .stat[data-s="ok"] .dot{background:var(--ok);box-shadow:0 0 0 3px rgba(74,208,122,.12),0 0 12px rgba(74,208,122,.5)}
+  .stat[data-s="err"] .dot{background:var(--err);box-shadow:0 0 0 3px rgba(255,95,82,.12)}
+  .stat[data-s="warn"] .dot{background:var(--warn);box-shadow:0 0 0 3px rgba(232,193,90,.12)}
+  .stat .spacer{flex:1}
+  .wsrc{
+    font-size:9px;letter-spacing:.18em;padding:2px 7px;border-radius:999px;
+    border:1px solid var(--hair);color:var(--dim);text-indent:.18em;
+    text-transform:uppercase;transition:color .4s,border-color .4s;
+  }
+  .wsrc[data-s="ok"]{color:var(--ok);border-color:rgba(74,208,122,.26)}
+  .wsrc[data-s="warn"]{color:var(--warn);border-color:rgba(232,193,90,.22)}
+  .wsrc[data-s="err"]{color:var(--err);border-color:rgba(255,95,82,.26)}
+
+  /* 电量 */
+  .batt{display:flex;align-items:center;gap:9px;opacity:0;transform:translateX(4px);
+        transition:opacity .7s var(--ease),transform .7s var(--ease)}
+  .batt.on{opacity:1;transform:none}
+  .bat{position:relative;width:25px;height:11px;border:1px solid var(--hair-2);
+       border-radius:3.5px;padding:1.5px;display:flex}
+  .bat::after{content:"";position:absolute;right:-3.5px;top:3px;width:2px;height:5px;
+       border-radius:0 1.5px 1.5px 0;background:var(--hair-2)}
+  .bat i{display:block;height:100%;border-radius:2px;background:var(--ice);
+       box-shadow:0 0 8px rgba(143,208,255,.45);
+       transition:width .9s var(--ease),background .5s,box-shadow .5s}
+  .batt.low .bat i{background:var(--warn);box-shadow:0 0 8px rgba(232,193,90,.45)}
+  .batt.crit .bat i{background:var(--err);box-shadow:0 0 9px rgba(255,95,82,.5)}
+  .pct{font-size:11.5px;letter-spacing:.04em;color:var(--muted);
+       font-variant-numeric:tabular-nums;transition:color .4s}
+  .batt.crit .pct{color:var(--err)}
+
+  /* ---------- 主视觉:波形 ---------- */
+  .hero{flex:1;position:relative;display:flex;flex-direction:column;justify-content:center;min-height:0}
+  #wave{display:block;width:100%;height:100%}
+
+  .readout{
+    position:absolute;left:0;right:0;bottom:6%;
+    display:flex;flex-direction:column;align-items:center;gap:7px;
+    pointer-events:none;
+  }
+  .mode{
+    font-size:34px;font-weight:200;letter-spacing:.16em;
+    color:var(--text);text-indent:.16em;
+    text-shadow:0 0 26px rgba(143,208,255,.18);
+    transition:opacity .3s var(--ease);
+  }
+  .sub{font-size:11px;letter-spacing:.22em;color:var(--dim);text-indent:.22em}
+
+  /* ---------- 模式圆环 ---------- */
+  .dials{
+    flex:0 0 auto;display:flex;justify-content:center;gap:6px;
+    padding:0 14px 16px;
+  }
+  .dial{
+    flex:1;max-width:112px;display:flex;flex-direction:column;align-items:center;gap:10px;
+    padding:12px 4px 8px;border-radius:16px;cursor:pointer;
+    transition:background .25s var(--ease),transform .25s var(--ease);
+  }
+  .dial:hover{background:rgba(255,255,255,.035)}
+  .dial:active{transform:scale(.96)}
+
+  .ring{
+    position:relative;width:62px;height:62px;border-radius:50%;
+    display:grid;place-items:center;
+    border:1px solid var(--hair-2);
+    background:radial-gradient(120% 120% at 50% 0%, rgba(255,255,255,.05), rgba(255,255,255,.012));
+    transition:all .45s var(--ease);
+  }
+  .ring svg{width:24px;height:24px;color:var(--muted);transition:color .35s var(--ease)}
+  .ring::after{
+    content:"";position:absolute;inset:-6px;border-radius:50%;
+    box-shadow:0 0 0 1px transparent;transition:all .45s var(--ease);
+  }
+
+  .dial.on .ring{
+    background:#f7f8fa;border-color:#fff;
+    box-shadow:0 0 26px rgba(255,255,255,.18),0 2px 10px rgba(0,0,0,.5);
+    transform:translateY(-1px);
+  }
+  .dial.on .ring svg{color:#0a0b0d}
+  .dial.on .ring::after{box-shadow:0 0 0 1px rgba(255,255,255,.16),0 0 0 7px var(--ice-soft)}
+  .dial.on .name{color:var(--text)}
+
+  .name{
+    font-size:11px;letter-spacing:.14em;color:var(--dim);text-indent:.14em;
+    transition:color .35s var(--ease);white-space:nowrap;
+  }
+
+  /* ---------- 高级设置 ---------- */
+  .adv-bar{
+    flex:0 0 auto;padding:0 22px 14px;display:flex;align-items:center;justify-content:center;
+    gap:7px;font-size:10px;letter-spacing:.24em;color:var(--dim);
+    cursor:pointer;transition:color .25s;
+  }
+  .adv-bar:hover{color:var(--muted)}
+  .adv-bar .chev{transition:transform .35s var(--ease)}
+  .adv-bar.open .chev{transform:rotate(90deg)}
+
+  .adv{
+    flex:0 0 auto;overflow:hidden;max-height:0;opacity:0;
+    transition:max-height .5s var(--ease),opacity .35s var(--ease),padding .4s var(--ease);
+    padding:0 22px;
+  }
+  .adv.open{max-height:300px;opacity:1;padding:0 22px 16px}
+  .row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .lbl{font-size:10px;letter-spacing:.14em;color:var(--dim);width:44px;flex:0 0 44px}
+  input{
+    flex:1;background:rgba(255,255,255,.04);border:1px solid var(--hair);
+    border-radius:8px;color:var(--text);font-family:Consolas,monospace;font-size:11px;
+    padding:7px 10px;outline:none;transition:border-color .2s;
+  }
+  input:focus{border-color:rgba(143,208,255,.35)}
+  .btn{
+    font-size:10px;letter-spacing:.1em;color:var(--muted);cursor:pointer;
+    padding:7px 12px;border-radius:8px;border:1px solid var(--hair);
+    background:rgba(255,255,255,.03);transition:all .2s;white-space:nowrap;
+  }
+  .btn:hover{color:var(--text);border-color:var(--hair-2);background:rgba(255,255,255,.06)}
+  .btn.on{color:var(--ice);border-color:rgba(143,208,255,.30);background:rgba(143,208,255,.08)}
+  .hint{font-size:10px;letter-spacing:.08em;color:var(--dim)}
+  .log{
+    height:92px;overflow:auto;background:rgba(0,0,0,.28);border:1px solid var(--hair);
+    border-radius:8px;padding:8px 10px;font-family:Consolas,monospace;font-size:10px;
+    line-height:1.65;color:var(--dim);white-space:pre-wrap;word-break:break-all;
+  }
+  .log b{font-weight:400;color:var(--ok)}
+  .log i{font-style:normal;color:#64d2ff}
+  .log e{font-style:normal;color:var(--err)}
+  .log::-webkit-scrollbar{width:6px}
+  .log::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:3px}
+
+  /* ---------- 入场动效 ---------- */
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .in{animation:rise .8s var(--ease) both}
+  .d1{animation-delay:.06s}.d2{animation-delay:.14s}.d3{animation-delay:.22s}
+  .d4{animation-delay:.30s}.d5{animation-delay:.38s}
+</style>
+</head>
+<body>
+
+<div class="atmos"><div class="grain"></div></div>
+
+<div class="shell">
+  <div class="bar" id="bar">
+    <div class="brand">EDIFIER <b>W830NB</b></div>
+    <div class="spacer"></div>
+    <div class="winbtn" id="btn-min" title="最小化">
+      <svg viewBox="0 0 12 12"><path d="M1.5 6h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    </div>
+    <div class="winbtn close" id="btn-close" title="收进托盘">
+      <svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    </div>
+  </div>
+
+  <div class="stat in d1" id="stat" data-s="warn">
+    <span class="dot"></span><span id="stat-text">连接中…</span>
+    <span class="wsrc" id="wave-src" data-s="warn">演示</span>
+    <span class="spacer"></span>
+    <div class="batt" id="batt">
+      <span class="bat"><i id="bat-fill" style="width:0%"></i></span>
+      <span class="pct" id="bat-pct">—</span>
+    </div>
+  </div>
+
+  <div class="hero in d2">
+    <canvas id="wave"></canvas>
+    <div class="readout">
+      <div class="mode" id="mode-name">—</div>
+      <div class="sub" id="mode-sub">等待连接</div>
+    </div>
+  </div>
+
+  <div class="dials in d3" id="dials"></div>
+
+  <div class="adv-bar in d4" id="adv-bar">
+    <svg class="chev" width="8" height="8" viewBox="0 0 8 8"><path d="M2.5 1l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    <span>高级设置</span>
+  </div>
+
+  <div class="adv in d5" id="adv">
+    <div class="row">
+      <span class="lbl">设备</span>
+      <input id="addr" value="C8:24:70:F4:A8:AC" title="留空则自动搜索附近的耳机">
+      <div class="btn" id="btn-reconnect">重连</div>
+      <div class="btn" id="btn-query">状态</div>
+      <div class="btn" id="btn-batt">电量</div>
+      <div class="btn" id="btn-heal" title="GATT 缓存损坏时才用;会短暂断开耳机音频">恢复蓝牙</div>
+    </div>
+    <div class="row">
+      <span class="lbl">波形</span>
+      <span class="hint">采集系统播放回环(WASAPI Loopback),没声音时为空</span>
+    </div>
+    <div class="row">
+      <span class="lbl">原始帧</span>
+      <input id="raw" placeholder="AA EC CC 00 00 62">
+      <div class="btn" id="btn-raw">发送</div>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+/* ================= 模式定义 ================= */
+/* cancel: 反相抵消强度 0..1  -> 决定残余噪声大小,这是整个画面的语义核心 */
+const MODES = [
+  { id:1, name:"深度降噪", sub:"最大程度压制环境噪音", cancel:0.94, icon:"deep" },
+  { id:2, name:"舒适降噪", sub:"降噪稍弱,耳压更轻",     cancel:0.74, icon:"comfort" },
+  { id:3, name:"宽频",     sub:"宽频段整体压制",         cancel:0.62, icon:"wide" },
+  { id:4, name:"防风噪",   sub:"抑制风噪与气流声",       cancel:0.50, icon:"wind" },
+  { id:5, name:"环境声",   sub:"通透模式,听得见周围",   cancel:0.04, icon:"ambient" },
+];
+
+const ICONS = {
+  deep:`<circle cx="12" cy="12" r="2.6" fill="currentColor"/>
+        <path d="M17.6 6.6a7.6 7.6 0 010 10.8M6.4 6.6a7.6 7.6 0 000 10.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`,
+  comfort:`<circle cx="12" cy="12" r="2.6" fill="currentColor"/>
+        <path d="M17.6 6.6a7.6 7.6 0 010 10.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`,
+  wide:`<path d="M18.4 5.6a9 9 0 010 12.8M5.6 5.6a9 9 0 000 12.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>`,
+  wind:`<path d="M3 8.5h9.5a2.6 2.6 0 10-2.6-2.6M3 12h13a2.6 2.6 0 11-2.6 2.6M3 15.5h6" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/>`,
+  ambient:`<path d="M10 5.6a9 9 0 010 12.8M14 8.4a5.2 5.2 0 010 7.2M18 6.2a9.6 9.6 0 010 11.6" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/>`,
+};
+
+/* ================= 状态 ================= */
+let current = 5;      // 当前模式下标(与设备回读一致时为准)
+let target  = 0.04;   // 目标抵消强度
+let shown   = 0.04;   // 平滑后的抵消强度
+let connected = false;
+
+/* ================= 波形 ================= */
+const cv = document.getElementById("wave");
+const ctx = cv.getContext("2d");
+let W=0,H=0,DPR=Math.min(devicePixelRatio||1,2);
+
+function resize(){
+  const r = cv.getBoundingClientRect();
+  W = Math.max(200, r.width); H = Math.max(120, r.height);
+  cv.width = W*DPR; cv.height = H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+addEventListener("resize", resize);
+
+/* ================= 真实音频 ================= */
+/* Python 侧采集系统播放回环,每帧推来 48 个频段的能量(~23 帧/秒)。
+   界面把它画成频谱柱 + 顶部峰值条。没有数据就什么都不画。 */
+let SPEC = null;          // 最近一帧各频段高度(48 个 0..1)
+let REAL_AT = 0;          // 收到最后一帧的时间戳
+let waveSrc = "wait";     // wait | live | silent | unavailable
+let silentRun = 0;
+
+window.__wave = function (csv) {
+  const parts = csv ? csv.split(",") : [];
+  const out = new Float32Array(parts.length);
+  let peak = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const v = +parts[i] || 0;
+    out[i] = v;
+    if (v > peak) peak = v;
+  }
+  SPEC = out;
+  REAL_AT = performance.now();
+
+  // 静音判定加滞后,避免乐句之间的停顿把标签闪来闪去
+  if (peak < 0.02) silentRun++; else silentRun = 0;
+  const st = silentRun > 8 ? "silent" : "live";
+  if (st !== waveSrc) { waveSrc = st; applyWaveBadge(); }
+};
+
+window.waveState = function (state) {
+  waveSrc = state;
+  applyWaveBadge();
+};
+
+function applyWaveBadge() {
+  const el = document.getElementById("wave-src");
+  if (!el) return;
+  let txt = "采集启动中", kind = "warn";
+  if (waveSrc === "live") { txt = "实时"; kind = "ok"; }
+  else if (waveSrc === "silent") { txt = "静音"; kind = "warn"; }
+  else if (waveSrc === "unavailable") { txt = "采集不可用"; kind = "err"; }
+  el.textContent = txt;
+  el.dataset.s = kind;
+}
+
+function drawWave(ts){
+  shown += (target - shown) * 0.055;
+
+  ctx.clearRect(0,0,W,H);
+  const mid = H*0.50;
+  const amp = H*0.30;
+
+  const PAD = 30;
+  const x0 = PAD, x1 = W-PAD;
+
+  drawReal({mid, amp, x0, x1});
+
+  // ---- 静默辉光:降噪越深越亮 ----
+  if(shown > 0.2){
+    const r = 110 + 60*shown;
+    const rg = ctx.createRadialGradient(W/2, mid, 0, W/2, mid, r);
+    rg.addColorStop(0, `rgba(143,208,255,${0.06*shown})`);
+    rg.addColorStop(1, "rgba(143,208,255,0)");
+    ctx.fillStyle=rg;
+    ctx.fillRect(W/2-r, mid-r, r*2, r*2);
+  }
+
+  requestAnimationFrame(drawWave);
+}
+
+/* ---- 真实模式:频谱柱 + 顶部峰值条 ---- */
+let PEAK = null;
+let PEAK_T = 0;
+
+function drawReal(g){
+  const {mid, amp, x0, x1} = g;
+  const fresh = (performance.now() - REAL_AT) < 1200;
+  if (!fresh || !SPEC || SPEC.length < 3) { PEAK = null; return; }
+
+  const n = SPEC.length;
+  if (!PEAK || PEAK.length !== n) {
+    PEAK = new Float32Array(n);
+    PEAK_T = performance.now();
+  }
+
+  const now = performance.now();
+  const dt = Math.min(0.12, Math.max(0, (now - PEAK_T) / 1000));
+  PEAK_T = now;
+
+  const y0 = mid + amp * 0.92;        // 柱子的地基
+  const hMax = amp * 1.95;            // 满格高度
+  const pitch = (x1 - x0) / n;
+  const bw = Math.max(2, pitch * 0.60);
+
+  // 同一套竖向渐变:越高的柱子顶端越亮
+  const gBar = ctx.createLinearGradient(0, y0 - hMax, 0, y0);
+  gBar.addColorStop(0,    "rgba(226,242,255,.95)");
+  gBar.addColorStop(0.55, "rgba(143,208,255,.78)");
+  gBar.addColorStop(1,    "rgba(84,132,176,.50)");
+
+  ctx.save();
+  for (let i = 0; i < n; i++) {
+    const v = Math.max(0, Math.min(1, SPEC[i]));
+
+    // 峰值条:瞬间顶上去,然后按重力慢慢落下来
+    if (v >= PEAK[i]) PEAK[i] = v;
+    else PEAK[i] = Math.max(0, PEAK[i] - dt * 0.55);
+
+    const x = x0 + pitch * i + (pitch - bw) / 2;
+
+    // 柱子
+    const h = Math.max(2, v * hMax);
+    ctx.beginPath();
+    ctx.roundRect(x, y0 - h, bw, h, Math.min(bw / 2, h / 2));
+    ctx.fillStyle = gBar;
+    ctx.fill();
+
+    // 峰值条
+    if (PEAK[i] > 0.02) {
+      const py = y0 - Math.max(3, PEAK[i] * hMax) - 5;
+      ctx.beginPath();
+      ctx.roundRect(x, py, bw, 2.5, 1.25);
+      ctx.fillStyle = "rgba(240,248,255,.92)";
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/* ================= 圆环 ================= */
+const dials = document.getElementById("dials");
+MODES.forEach((m,i)=>{
+  const d = document.createElement("div");
+  d.className = "dial";
+  d.dataset.id = m.id;
+  d.innerHTML = `<div class="ring"><svg viewBox="0 0 24 24">${ICONS[m.icon]}</svg></div>
+                 <div class="name">${m.name}</div>`;
+  d.addEventListener("click", ()=> pick(m.id));
+  d.style.animation = `rise .7s var(--ease) ${0.30+i*0.05}s both`;
+  dials.appendChild(d);
+});
+
+function render(){
+  document.querySelectorAll(".dial").forEach(d=>{
+    d.classList.toggle("on", Number(d.dataset.id) === current);
+  });
+  const m = MODES.find(x=>x.id===current);
+  if(m){
+    document.getElementById("mode-name").textContent = m.name;
+    document.getElementById("mode-sub").textContent  = m.sub;
+    target = m.cancel;
+  }
+}
+
+function pick(id){
+  if(!connected) return;
+  current = id;
+  render();
+  pywebview.api.set_mode(id);
+}
+
+/* ================= 状态 / 日志 ================= */
+function setStatus(text, s){
+  document.getElementById("stat-text").textContent = text;
+  document.getElementById("stat").dataset.s = s || "info";
+}
+function addLog(msg, kind){
+  const el = document.getElementById("log");
+  const tag = kind==="send" ? "b" : kind==="recv" ? "i" : kind==="err" ? "e" : "span";
+  const line = document.createElement(tag);
+  line.textContent = msg;
+  el.appendChild(line); el.appendChild(document.createElement("br"));
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ================= 与 Python 的桥 ================= */
+window.applyMode = function(id){ current = id; render(); };
+window.setConnected = function(v){ connected = v; };
+window.setAddr = function(a){
+  const el = document.getElementById("addr");
+  if (el && a) el.value = a;
+};
+window.setBattery = function(p){
+  const pct = Math.max(0, Math.min(100, Math.round(p)));
+  const box = document.getElementById("batt");
+  box.classList.add("on");
+  box.classList.toggle("crit", pct <= 10);
+  box.classList.toggle("low",  pct > 10 && pct <= 25);
+  document.getElementById("bat-fill").style.width = Math.max(3, pct) + "%";
+  document.getElementById("bat-pct").textContent = pct + "%";
+};
+
+/* ================= 交互 ================= */
+document.getElementById("btn-min").onclick   = ()=> pywebview.api.minimize();
+document.getElementById("btn-close").onclick = ()=> pywebview.api.hide_to_tray();
+document.getElementById("adv-bar").onclick   = ()=>{
+  const a=document.getElementById("adv"), b=document.getElementById("adv-bar");
+  a.classList.toggle("open"); b.classList.toggle("open");
+};
+document.getElementById("btn-reconnect").onclick = ()=>
+  pywebview.api.connect(document.getElementById("addr").value.trim());
+document.getElementById("btn-query").onclick = ()=> pywebview.api.query();
+document.getElementById("btn-batt").onclick  = ()=> pywebview.api.query_battery();
+document.getElementById("btn-heal").onclick  = ()=> pywebview.api.reset_radio();
+document.getElementById("btn-raw").onclick   = ()=>{
+  const v=document.getElementById("raw").value.trim();
+  if(v) pywebview.api.raw(v);
+};
+
+resize(); render(); applyWaveBadge(); requestAnimationFrame(drawWave);
+</script>
+</body>
+</html>
