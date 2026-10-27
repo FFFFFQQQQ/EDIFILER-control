@@ -716,7 +716,46 @@ def _set_aumid(app_id: str = "Edifier.W830NB.Console") -> None:
         pass
 
 
+MUTEX_NAME = "Local\\W830NB-Console.SingleInstance"
+_MUTEX = None                       # 模块级持有,进程退出前别让它被回收
+
+
+def activate_existing(tries: int = 24) -> bool:
+    """把已经在跑的窗口叫到前台。收进托盘(hide)和最小化都处理。"""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    SW_SHOW, SW_RESTORE = 5, 9
+    for _ in range(tries):
+        hwnd = user32.FindWindowW(None, APP_TITLE)
+        if hwnd:
+            # Hide() 收进托盘的用 SW_SHOW,最小化的用 SW_RESTORE
+            user32.ShowWindow(hwnd, SW_RESTORE if user32.IsIconic(hwnd) else SW_SHOW)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            return True
+        time.sleep(0.25)            # 老实例可能还在启动,等窗口出来
+    return False
+
+
+def acquire_single_instance() -> bool:
+    """抢单例锁。第一个实例拿到返回 True;已有实例在跑则叫出它的窗口并返回 False。"""
+    global _MUTEX
+    import ctypes
+
+    k32 = ctypes.windll.kernel32
+    ERROR_ALREADY_EXISTS = 183
+    _MUTEX = k32.CreateMutexW(None, False, MUTEX_NAME)
+    if k32.GetLastError() != ERROR_ALREADY_EXISTS:
+        return True                 # 包括句柄为 0 的异常情况,当作能跑
+    log("已有实例在跑,唤起它的窗口后退出")
+    activate_existing()
+    return False
+
+
 def main():
+    if not acquire_single_instance():
+        return
     _set_aumid()
     log(f"=== start frozen={getattr(sys, 'frozen', False)} exe={sys.executable}")
     api = Api()
