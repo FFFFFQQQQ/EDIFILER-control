@@ -194,6 +194,9 @@
   }
   .btn:hover{color:var(--text);border-color:var(--hair-2);background:rgba(255,255,255,.06)}
   .btn.on{color:var(--ice);border-color:rgba(143,208,255,.30);background:rgba(143,208,255,.08)}
+  .btn.danger{color:var(--err);border-color:rgba(255,120,120,.22)}
+  .btn.danger:hover{background:rgba(255,90,90,.10);border-color:rgba(255,120,120,.45)}
+  .btn.armed{color:#fff;background:rgba(255,80,80,.22);border-color:rgba(255,120,120,.70)}
   .hint{font-size:10px;letter-spacing:.08em;color:var(--dim)}
   .log{
     height:92px;overflow:auto;background:rgba(0,0,0,.28);border:1px solid var(--hair);
@@ -262,6 +265,7 @@
       <div class="btn" id="btn-query">状态</div>
       <div class="btn" id="btn-batt">电量</div>
       <div class="btn" id="btn-heal" title="GATT 缓存损坏时才用;会短暂断开耳机音频">恢复蓝牙</div>
+      <div class="btn danger" id="btn-poweroff" title="发送关机命令,耳机会立即断电;需点两次确认">关机</div>
     </div>
     <div class="row">
       <span class="lbl">波形</span>
@@ -517,6 +521,29 @@ document.getElementById("btn-reconnect").onclick = ()=>
 document.getElementById("btn-query").onclick = ()=> pywebview.api.query();
 document.getElementById("btn-batt").onclick  = ()=> pywebview.api.query_battery();
 document.getElementById("btn-heal").onclick  = ()=> pywebview.api.reset_radio();
+/* 关机是破坏性操作:第一次点击「上膛」,4 秒内再点一次才真发 */
+let offArmed = false, offTimer = 0;
+const offBtn = document.getElementById("btn-poweroff");
+function disarmOff(){
+  offArmed = false;
+  offBtn.textContent = "关机";
+  offBtn.classList.remove("armed");
+  clearTimeout(offTimer);
+}
+offBtn.onclick = ()=>{
+  if(!offArmed){
+    if(!connected){ addLog("未连接,无法发送关机命令","warn"); return; }
+    offArmed = true;
+    offBtn.textContent = "确认关机";
+    offBtn.classList.add("armed");
+    addLog("再点一次「确认关机」:耳机会立即断电","warn");
+    clearTimeout(offTimer);
+    offTimer = setTimeout(disarmOff, 4000);
+    return;
+  }
+  disarmOff();
+  pywebview.api.power_off();
+};
 document.getElementById("btn-raw").onclick   = ()=>{
   const v=document.getElementById("raw").value.trim();
   if(v) pywebview.api.raw(v);

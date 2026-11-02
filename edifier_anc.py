@@ -34,6 +34,7 @@ CMD_ANC_QUERY = 0xCC
 CMD_ANC_SET = 0xC1
 CMD_BATTERY = 0xD0
 CMD_FIRMWARE = 0xC6
+CMD_POWER_OFF = 0xCE
 
 MODES = {
     "deep":     (1, "深度降噪"),
@@ -188,6 +189,11 @@ async def main_async(args):
             print(f"  {cn:5} -> 回读 {mode_name(m) if m else '(无响应)':8} {ok}")
         return 0
 
+    if args.action == "poweroff":
+        r = await s.send(build(CMD_POWER_OFF), 2.0)
+        print(f"关机命令 -> {hexs(r) if r else '无响应'}")
+        return 0 if r else 1
+
     if args.action == "raw":
         pkt = bytes.fromhex(args.hex.replace(" ", ""))
         r = await s.send(pkt)
@@ -204,6 +210,7 @@ def main():
     p = sub.add_parser("set", help="设置降噪模式")
     p.add_argument("mode", choices=sorted(MODES), help="deep/comfort/wind/ambient/off")
     sub.add_parser("cycle", help="依次切换全部模式并回读验证")
+    sub.add_parser("poweroff", help="关机(发 0xCE,耳机断电)")
     p = sub.add_parser("raw", help="发送原始十六进制帧")
     p.add_argument("hex")
     args = ap.parse_args()

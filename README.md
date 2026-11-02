@@ -48,6 +48,7 @@ python edifier_app.py
 - 中间是真实音频的频谱柱(采集系统播放回环),没声音时为空
 - 点右上角 ✕ 收进托盘,**托盘菜单 → 退出** 才真正结束进程
 - 只允许跑一个实例:重复双击 exe 不会开新窗口,而是把已经在跑的那个叫回前台(收进托盘或最小化都会还原)
+- 「高级设置 → 关机」点两下确认后给耳机断电(发 `0xCE`);断电后耳机要手动开机,再点「重连」
 
 「高级设置」里还有:重连、查询状态、查电量、发原始帧、日志。
 
@@ -98,12 +99,32 @@ python edifier_anc.py set wide                  # 宽频
 python edifier_anc.py set wind                  # 防风噪
 python edifier_anc.py set ambient               # 环境声
 python edifier_anc.py cycle                     # 依次切换全部档位并回读验证
+python edifier_anc.py poweroff                  # 给耳机断电(发 0xCE)
 python edifier_anc.py raw "AA EC CC 00 00 62"   # 发原始帧
 ```
 
 ---
 
-# 四、出问题时
+# 四、定时关机(可选)
+
+`poweroff_task.py` 会自动连上耳机并发一次 `0xCE`。注册成每天 17:40 的计划任务:
+
+```powershell
+$pyw = (Get-Command python).Source -replace 'python\.exe$','pythonw.exe'
+$act = New-ScheduledTaskAction -Execute $pyw -Argument '"F:\耳机控制逆向功能\poweroff_task.py"'
+$trg = New-ScheduledTaskTrigger -Daily -At 17:40
+$set = New-ScheduledTaskSettingsSet -StartWhenAvailable
+Register-ScheduledTask -TaskName "W830NB-DailyPowerOff" -Action $act -Trigger $trg -Settings $set -Force
+```
+
+- 用 `pythonw.exe` 跑,不会弹控制台窗口;`-StartWhenAvailable` 让电脑睡眠错过时间点后醒来补跑
+- 结果写 `%LOCALAPPDATA%\W830NB-Console\poweroff_task.log`,任务本身没有界面
+- **前提**:到点时耳机开着、在电脑附近、没连着手机;否则只会在日志里记一条失败
+- 取消:`Unregister-ScheduledTask -TaskName "W830NB-DailyPowerOff" -Confirm:$false`
+
+---
+
+# 五、出问题时
 
 **先看日志:** `%LOCALAPPDATA%\W830NB-Console\app.log`
 里面记录了启动、音频设备、每次连接失败的具体错误码。
@@ -118,7 +139,7 @@ python edifier_anc.py raw "AA EC CC 00 00 62"   # 发原始帧
 
 ---
 
-# 五、协议规范(全部经实机逐帧验证)
+# 六、协议规范(全部经实机逐帧验证)
 
 ## 帧格式
 
@@ -192,7 +213,7 @@ for (i) out[i] = payload[i] ^ key;
 
 ---
 
-# 六、协议分析过程
+# 七、协议分析过程
 
 三份独立来源交叉印证 + 实机验证:
 
@@ -211,11 +232,12 @@ for (i) out[i] = payload[i] ^ key;
 
 ---
 
-# 七、目录
+# 八、目录
 
 ```
 edifier_app.py            图形控制台(主程序,pywebview + WebView2)
 edifier_anc.py            命令行工具
+poweroff_task.py          定时关机任务(给计划任务调用)
 make_icon.py              生成 ui/icon.ico 与 ui/icon.png
 ui/index.html             界面(HTML/CSS/JS)
 ui/icon.ico  icon.png     应用图标 / 托盘图标

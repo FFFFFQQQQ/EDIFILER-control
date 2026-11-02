@@ -60,6 +60,7 @@ GROUP_INDEX = 3
 CMD_ANC_QUERY = 0xCC
 CMD_ANC_SET = 0xC1
 CMD_BATTERY = 0xD0
+CMD_POWER_OFF = 0xCE
 
 MODE_IDS = {1, 2, 3, 4, 5}
 
@@ -368,6 +369,24 @@ class BleWorker(threading.Thread):
                 return
         self._emit("log", "    -> 电量无响应", "warn")
 
+    async def do_power_off(self):
+        """发 0xCE 关机帧。耳机收到后立刻断电,不会再有后续通信。"""
+        if self.ch_write is None:
+            self._emit("status", "未连接", "err")
+            return
+        await self._write(build(CMD_POWER_OFF))
+        await asyncio.sleep(1.5)
+        ack = self.responses[-1] if self.responses else None
+        if ack is None:
+            self._emit("log", "    -> 关机命令无响应", "warn")
+            return
+        self._emit("log", f"    -> 关机命令已确认 {hexs(ack)}", "info")
+        # 耳机正在断电,后续连接作废;等用户重新开机后点「重连」
+        self.ch_write = None
+        self.le = self.svc = self.ch_notify = None
+        self._emit("connected", False)
+        self._emit("status", "已关机", "ok")
+
     async def do_raw(self, hexstr):
         if self.ch_write is None:
             return
@@ -548,6 +567,11 @@ class Api:
 
     def raw(self, hexstr):
         self.worker.submit("raw", hexstr=hexstr)
+        return True
+
+    def power_off(self):
+        """UI 上确认两次后才调用。"""
+        self.worker.submit("power_off")
         return True
 
     def connect(self, addr=None):
