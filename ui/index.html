@@ -272,6 +272,11 @@
       <span class="hint">采集系统播放回环(WASAPI Loopback),没声音时为空</span>
     </div>
     <div class="row">
+      <span class="lbl">锁屏</span>
+      <div class="btn on" id="btn-lockpause">锁屏暂停媒体 · 开</div>
+      <span class="hint">锁屏时暂停正在播放的音乐/视频</span>
+    </div>
+    <div class="row">
       <span class="lbl">原始帧</span>
       <input id="raw" placeholder="AA EC CC 00 00 62">
       <div class="btn" id="btn-raw">发送</div>
@@ -547,6 +552,26 @@ offBtn.onclick = ()=>{
 document.getElementById("btn-raw").onclick   = ()=>{
   const v=document.getElementById("raw").value.trim();
   if(v) pywebview.api.raw(v);
+};
+
+/* 锁屏暂停媒体:默认开,状态存在 config.json */
+const lockBtn = document.getElementById("btn-lockpause");
+let lockPause = true;
+function paintLockPause(){
+  lockBtn.classList.toggle("on", lockPause);
+  lockBtn.textContent = "锁屏暂停媒体 · " + (lockPause ? "开" : "关");
+}
+paintLockPause();
+window.addEventListener("pywebviewready", async ()=>{
+  try {
+    lockPause = !!(await pywebview.api.get_lock_pause());
+    paintLockPause();
+  } catch(e){}
+});
+lockBtn.onclick = ()=>{
+  lockPause = !lockPause;
+  paintLockPause();
+  pywebview.api.set_lock_pause(lockPause);
 };
 
 resize(); render(); applyWaveBadge(); requestAnimationFrame(drawWave);

@@ -19,6 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import webview
 
+from lock_pause import SessionLockWatcher, pause_playing_media
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -31,6 +33,28 @@ def _res(*parts) -> str:
 LOG_PATH = os.path.join(
     os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
     "W830NB-Console", "app.log")
+CFG_PATH = os.path.join(os.path.dirname(LOG_PATH), "config.json")
+
+
+def load_config() -> dict:
+    """读 config.json;不存在或损坏时返回空 dict。"""
+    try:
+        with open(CFG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_config(**kw) -> None:
+    cfg = load_config()
+    cfg.update(kw)
+    try:
+        os.makedirs(os.path.dirname(CFG_PATH), exist_ok=True)
+        with open(CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        log(f"写配置失败: {type(exc).__name__}: {exc}")
 
 
 def log(msg: str) -> None:
@@ -271,7 +295,7 @@ class BleWorker(threading.Thread):
         svcs, self.svc = [], None
         for attempt in range(4):
             mode = BluetoothCacheMode.CACHED if attempt < 2 else BluetoothCacheMode.UNCACHED
-            svcs = list((await self.le.get_gatt_services_with_cache_mode_async(mode)).services)
+            svcs = list((await self.le.get_gatt_services_async(mode)).services)
             self.svc = next((s for s in svcs if str(s.uuid).startswith(SVC_PREFIX)), None)
             if self.svc is not None:
                 break
@@ -298,7 +322,8 @@ class BleWorker(threading.Thread):
         self.ch_notify.add_value_changed(self._on_notify)
         await self.ch_notify.write_client_characteristic_configuration_descriptor_async(CCCD.NOTIFY)
         await asyncio.sleep(0.7)
-        self._emit("addr", ":".join(f"{b:02X}" for b in target.to_bytes(6, "big")))
+        addr = ":".join(f"{b:02X}" for b in target.to_bytes(6, "big"))
+        self._emit("addr", addr)
         self._emit("status", "已连接", "ok")
         self._emit("connected", True)
         await self.do_query()
@@ -332,7 +357,7 @@ class BleWorker(threading.Thread):
         self._emit("log", f">>> {hexs(pkt)}", "send")
         d = DataWriter()
         d.write_bytes(pkt)
-        await self.ch_write.write_value_with_option_async(
+        await self.ch_write.write_value_async(
             d.detach_buffer(), GattWriteOption.WRITE_WITHOUT_RESPONSE)
 
     async def do_set_mode(self, index):
@@ -519,6 +544,8 @@ class Api:
         self.worker.start()
         self._wave_lock = threading.Lock()
         self.wave_enabled = True
+        self.lock_pause_enabled = bool(load_config().get("lock_pause", True))
+        self._lock_watcher = None          # 持有引用,防止被回收
 
     # ---- 真实波形 ----
     def push_wave(self, csv: str) -> None:
@@ -577,6 +604,17 @@ class Api:
     def connect(self, addr=None):
         # 地址留空 -> 自动扫描
         self.worker.submit("connect", addr=(addr or "").strip())
+        return True
+
+    def get_lock_pause(self):
+        """给界面读当前开关状态(启动时同步按钮)。"""
+        return self.lock_pause_enabled
+
+    def set_lock_pause(self, enabled):
+        """界面上的「锁屏暂停媒体」开关,写入 config.json。"""
+        self.lock_pause_enabled = bool(enabled)
+        save_config(lock_pause=self.lock_pause_enabled)
+        log(f"锁屏暂停媒体: {'开' if self.lock_pause_enabled else '关'}")
         return True
 
     def minimize(self):
@@ -730,6 +768,39 @@ def build_tray(api: Api):
     return icon
 
 
+def _lock_pause_job(api: Api) -> None:
+    """锁屏后在后台线程暂停媒体。SMTC 调用可能慢,不能卡消息循环。"""
+    try:
+        paused = pause_playing_media()
+        if paused:
+            msg = "锁屏:已暂停 " + ", ".join(paused)
+        else:
+            msg = "锁屏:没有正在播放的媒体"
+        log(msg)
+        api.worker.out_q.put(("log", (msg, "info")))
+    except Exception as exc:  # noqa: BLE001
+        log(f"锁屏暂停失败: {type(exc).__name__}: {exc}")
+        api.worker.out_q.put(("log", (f"锁屏暂停失败: {exc}", "err")))
+
+
+def start_lock_pause(api: Api) -> None:
+    """启动锁屏监听。失败只记日志,不影响控制台主功能。"""
+    def on_lock():
+        if api.lock_pause_enabled:
+            threading.Thread(
+                target=_lock_pause_job, args=(api,), daemon=True).start()
+        else:
+            log("锁屏:开关关闭,跳过暂停")
+
+    try:
+        watcher = SessionLockWatcher(on_lock=on_lock, log=log)
+        watcher.start()
+        api._lock_watcher = watcher
+        log("锁屏监听已启动")
+    except Exception as exc:  # noqa: BLE001
+        log(f"锁屏监听启动失败: {type(exc).__name__}: {exc}")
+
+
 def _set_aumid(app_id: str = "Edifier.W830NB.Console") -> None:
     """给进程一个独立 AppUserModelID。否则任务栏按 pythonw.exe 分组,
     会一直显示 Python 的 exe 图标,无视 WM_SETICON。"""
@@ -795,11 +866,16 @@ def main():
         min_size=(720, 660),
     )
     api.window = win
+    # pywebview 6.2 会递归遍历 js_api 的属性生成桥接,遍历到 Window 会钻进
+    # WinForms 的 AccessibilityObject.Bounds.Empty.Empty… 无限链并爆栈,
+    # 导致 loaded 事件永不触发(页面渲染但一直不连接)。标记后跳过。
+    win._serializable = False
     threading.Thread(target=api.pump_loop, daemon=True).start()
     threading.Thread(target=wave_loop, args=(api,), daemon=True).start()
     threading.Thread(target=apply_window_icon,
                      args=(APP_TITLE, ICON), daemon=True).start()
     build_tray(api)
+    start_lock_pause(api)
 
     def on_loaded():
         api.ready = True

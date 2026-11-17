@@ -49,6 +49,8 @@ python edifier_app.py
 - 点右上角 ✕ 收进托盘,**托盘菜单 → 退出** 才真正结束进程
 - 只允许跑一个实例:重复双击 exe 不会开新窗口,而是把已经在跑的那个叫回前台(收进托盘或最小化都会还原)
 - 「高级设置 → 关机」点两下确认后给耳机断电(发 `0xCE`);断电后耳机要手动开机,再点「重连」
+- 「高级设置 → 锁屏」默认开启:锁屏时暂停所有正在播放的媒体(音乐/视频),解锁后不自动恢复;
+  开关状态存在 `%LOCALAPPDATA%\W830NB-Console\config.json` 的 `lock_pause` 字段
 
 「高级设置」里还有:重连、查询状态、查电量、发原始帧、日志。
 
@@ -131,6 +133,7 @@ Register-ScheduledTask -TaskName "W830NB-DailyPowerOff" -Action $act -Trigger $t
 
 | 现象 | 处理 |
 |---|---|
+| 日志里 `module 'winrt._winrt' has no attribute '_C_API'` | winrt 依赖混装了 3.x 和 4.x。执行 `pip install -U "winrt-runtime>=4" "winrt-Windows.*>=4"`,或直接 `pip install -r requirements.txt` 重装 |
 | 「特征枚举为空」/ 连不上 | Windows 的 GATT 缓存损坏(反复连断后常见)。把电脑蓝牙**关掉再打开**,再重连。程序会自动重试缓存/非缓存两种发现方式 |
 | 搜索不到耳机 | 确认耳机已开机、没连着手机;或到「高级设置」手动填地址 |
 | 频谱柱一直空、徽章显示「采集不可用」 | `pip install SoundCard` 没装上,或系统没有可用的播放设备 |
@@ -197,7 +200,7 @@ for (i) out[i] = payload[i] ^ key;
 
 ## 设备发现
 
-程序不依赖固定 MAC:先按配置的地址快速试一次,失败后扫描 BLE 广播 6 秒,
+程序不依赖固定 MAC:先按上次连过的地址快速试一次,失败后扫描 BLE 广播 6 秒,
 按**广播名含 `EDIFIER`** 或**广播里带协议服务 UUID(48098501)** 匹配,逐个尝试连接。
 
 ## 其它命令(来自 APK `CommandIndex`)
@@ -237,6 +240,7 @@ for (i) out[i] = payload[i] ^ key;
 ```
 edifier_app.py            图形控制台(主程序,pywebview + WebView2)
 edifier_anc.py            命令行工具
+lock_pause.py             锁屏暂停媒体(WTS 锁屏事件 + SMTC)
 poweroff_task.py          定时关机任务(给计划任务调用)
 make_icon.py              生成 ui/icon.ico 与 ui/icon.png
 ui/index.html             界面(HTML/CSS/JS)

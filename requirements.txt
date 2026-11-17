@@ -9,11 +9,18 @@ SoundCard>=0.4.3        # WASAPI loopback,抓系统正在播放的声音
 numpy>=1.24
 
 # ---- 蓝牙(WinRT)----
-winrt-runtime>=3.0
-winrt-Windows.Devices.Bluetooth>=3.0
-winrt-Windows.Devices.Bluetooth.Advertisement>=3.0
-winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=3.0
-winrt-Windows.Devices.Radios>=3.0
-winrt-Windows.Storage.Streams>=3.0
-winrt-Windows.Foundation>=3.0
-winrt-Windows.Foundation.Collections>=3.0
+# 注意:所有 winrt-Windows.* 必须同一代,不能和 3.x 混装。
+# 3.2.1 的插件调用 winrt._winrt._C_API,装上 4.x 的 Media.Control
+# 会连带把 winrt-runtime 升到 4.x,老插件随即报
+# "module 'winrt._winrt' has no attribute '_C_API'",表现为连不上耳机。
+winrt-runtime>=4
+winrt-Windows.Devices.Bluetooth>=4
+winrt-Windows.Devices.Bluetooth.Advertisement>=4
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=4
+winrt-Windows.Devices.Radios>=4
+winrt-Windows.Storage.Streams>=4
+winrt-Windows.Foundation>=4
+winrt-Windows.Foundation.Collections>=4
+
+# ---- 锁屏暂停媒体(SMTC)----
+winrt-Windows.Media.Control>=4
