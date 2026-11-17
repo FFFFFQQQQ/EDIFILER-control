@@ -209,6 +209,63 @@ class BleWorker(threading.Thread):
         watcher.stop()
         return found
 
+    async def scan_devices(self, seconds: float = 5.0):
+        """扫描附近的 BLE 设备,给界面做选择列表。
+
+        只收有广播名的设备(没名字的 MAC 对用户没意义);按信号强度排序,
+        支持本耳机协议的(名字含 EDIFIER 或广播了私有服务)排前面。
+        """
+        from winrt.windows.devices.bluetooth.advertisement import (
+            BluetoothLEAdvertisementWatcher, BluetoothLEScanningMode)
+
+        found: dict[str, dict] = {}
+
+        def on_recv(_watcher, args):
+            try:
+                adv = args.advertisement
+                name = (adv.local_name or "").strip()
+                if not name:
+                    return
+                uuids = [str(u).lower() for u in adv.service_uuids]
+                raw = f"{args.bluetooth_address:012X}"
+                addr = ":".join(raw[i:i + 2] for i in range(0, 12, 2))
+                support = ("EDIFIER" in name.upper()
+                           or any(u.startswith(SVC_PREFIX) for u in uuids))
+                rssi = int(args.raw_signal_strength_in_dbm)
+            except Exception:  # noqa: BLE001
+                return
+            old = found.get(addr)
+            if old is None or rssi > old["rssi"]:
+                found[addr] = {"name": name, "addr": addr,
+                               "rssi": rssi, "support": support}
+
+        watcher = BluetoothLEAdvertisementWatcher()
+        watcher.scanning_mode = BluetoothLEScanningMode.ACTIVE
+        watcher.add_received(on_recv)
+        watcher.start()
+        await asyncio.sleep(seconds)
+        watcher.stop()
+        return sorted(found.values(),
+                      key=lambda d: (not d["support"], -d["rssi"]))
+
+    async def do_scan(self):
+        """界面点「搜索」:列出附近设备,不改变当前连接。"""
+        self._emit("status", "搜索设备…", "warn")
+        self._emit("log", "扫描附近的蓝牙设备(约 5 秒)…", "info")
+        try:
+            devs = await self.scan_devices()
+        except Exception as exc:  # noqa: BLE001
+            self._emit("log", f"扫描失败: {type(exc).__name__}: {exc}", "err")
+            devs = []
+        self._emit("scan", devs)
+        if devs:
+            self._emit("log", f"找到 {len(devs)} 个设备,点一个连接", "info")
+        else:
+            self._emit("log", "没找到带名字的蓝牙设备,确认耳机已开机", "err")
+        linked = self.ch_write is not None
+        self._emit("status", "已连接" if linked else "未连接",
+                   "ok" if linked else "warn")
+
     async def do_connect(self, addr=None):
         """连接。先试给定地址,失败就自动扫描附近的 EDIFIER 耳机。
         GATT 缓存损坏时不擅自重启蓝牙(那会断掉你的音频),
@@ -324,6 +381,7 @@ class BleWorker(threading.Thread):
         await asyncio.sleep(0.7)
         addr = ":".join(f"{b:02X}" for b in target.to_bytes(6, "big"))
         self._emit("addr", addr)
+        save_config(addr=addr)          # 下次启动优先连这台
         self._emit("status", "已连接", "ok")
         self._emit("connected", True)
         await self.do_query()
@@ -606,6 +664,15 @@ class Api:
         self.worker.submit("connect", addr=(addr or "").strip())
         return True
 
+    def scan(self):
+        """界面点「搜索」:扫描附近蓝牙设备,结果通过 scan 事件返回。"""
+        self.worker.submit("scan")
+        return True
+
+    def get_last_addr(self):
+        """上次连上的设备地址,给界面初始化用。"""
+        return load_config().get("addr") or BLE_ADDR_DEFAULT
+
     def get_lock_pause(self):
         """给界面读当前开关状态(启动时同步按钮)。"""
         return self.lock_pause_enabled
@@ -656,6 +723,9 @@ class Api:
                 script.append(f"setBattery({int(args[0])})")
             elif kind == "addr":
                 script.append(f"window.setAddr&&window.setAddr({json.dumps(args[0])})")
+            elif kind == "scan":
+                script.append(
+                    f"window.showScan&&window.showScan({json.dumps(args[0])})")
             elif kind == "wave_state":
                 script.append(
                     f"window.waveState&&window.waveState({json.dumps(args[0])},"
@@ -881,7 +951,7 @@ def main():
         api.ready = True
         log("page loaded")
         print("[main] 页面已加载,开始自动连接", flush=True)
-        api.connect(BLE_ADDR_DEFAULT)
+        api.connect(load_config().get("addr") or BLE_ADDR_DEFAULT)
 
     win.events.loaded += on_loaded
     webview.start(debug=False, icon=ICON if os.path.exists(ICON) else None)
