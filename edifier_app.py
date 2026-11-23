@@ -86,7 +86,9 @@ CMD_ANC_SET = 0xC1
 CMD_BATTERY = 0xD0
 CMD_POWER_OFF = 0xCE
 
-MODE_IDS = {1, 2, 3, 4, 5}
+MODE_NAMES = {1: "深度降噪", 2: "舒适降噪", 3: "宽频", 4: "防风噪", 5: "环境声"}
+MODE_IDS = set(MODE_NAMES)
+DEFAULT_MODE = 2                     # 连接后自动切换到的档位:舒适降噪
 
 
 class CacheError(RuntimeError):
@@ -386,6 +388,12 @@ class BleWorker(threading.Thread):
         self._emit("connected", True)
         await self.do_query()
         await self.do_query_battery()
+        # 连上后固定到舒适降噪:压住固件重连时恢复记忆档位(常见是环境声)的行为
+        try:
+            await self.do_set_mode(DEFAULT_MODE, auto=True)
+        except Exception as exc:  # noqa: BLE001  设档失败不影响已建立的连接
+            log(f"连接后自动设档失败: {type(exc).__name__}: {exc}")
+            self._emit("log", f"自动设「舒适降噪」失败: {exc}", "warn")
         asyncio.ensure_future(self._battery_poll())
 
     async def _battery_poll(self):
@@ -418,17 +426,27 @@ class BleWorker(threading.Thread):
         await self.ch_write.write_value_async(
             d.detach_buffer(), GattWriteOption.WRITE_WITHOUT_RESPONSE)
 
-    async def do_set_mode(self, index):
+    async def do_set_mode(self, index, auto: bool = False):
         if self.ch_write is None:
             self._emit("status", "未连接", "err")
             return
-        await self._write(build(CMD_ANC_SET, [GROUP_INDEX, int(index)]))
+        idx = int(index)
+        # 记进 app.log:之后出现"自己切档"时,能一眼看出是谁发的
+        log(f"设置档位 -> {MODE_NAMES.get(idx, '未知')}({idx})"
+            + (" [连接后自动]" if auto else ""))
+        await self._write(build(CMD_ANC_SET, [GROUP_INDEX, idx]))
         await asyncio.sleep(1.3)
-        await self.do_query()
+        m = await self.do_query()
+        if m is None:
+            log("档位回读: 无响应")
+        else:
+            log(f"档位回读: {MODE_NAMES.get(m, '未知')}({m})"
+                + ("" if m == idx else "  [与下发不一致]"))
 
     async def do_query(self):
+        """查询当前档位,返回模式号;无响应返回 None。"""
         if self.ch_write is None:
-            return
+            return None
         await self._write(build(CMD_ANC_QUERY))
         await asyncio.sleep(1.1)
         if self.responses:
@@ -436,8 +454,10 @@ class BleWorker(threading.Thread):
             if m in MODE_IDS:
                 self._emit("mode", m)
                 self._emit("log", f"    -> 模式 {m}", "info")
-        else:
-            self._emit("log", "    -> 无响应", "warn")
+                return m
+            return None
+        self._emit("log", "    -> 无响应", "warn")
+        return None
 
     async def do_query_battery(self):
         if self.ch_write is None:
